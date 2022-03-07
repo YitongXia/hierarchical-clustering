@@ -1,0 +1,275 @@
+import numpy as np
+import heapq
+import os
+import scipy.spatial
+import math
+from scipy.spatial import distance
+
+
+class bicluster:
+    def __init__(self, vec, left=None, right=None, distance=0.0, id=None):
+        self.left = left
+        self.vec = vec
+        self.right = right
+        self.distance = distance
+        self.id = id
+
+
+class Point:
+    def __init__(self, x, y, z):
+        self.x = float(x)
+        self.y = float(y)
+        self.z = float(z)
+
+
+def read_object(filename):
+    point_list = []
+    with open(filename, "r") as fh:
+        lines = fh.readlines()
+        for line in lines:
+            pt_x = float(line.split(" ")[0])
+            pt_y = float(line.split(" ")[1])
+            pt_z = float(line.split(" ")[2].strip('\n'))
+            pt = np.array((pt_x, pt_y, pt_z))
+            point_list.append(pt)
+    return point_list
+
+
+def compute_height_difference(point_list):
+    z_max = point_list[0][2]
+    z_min = point_list[0][2]
+    for point in point_list:
+        if point[2] > z_max: z_max = point[2]
+        if point[2] < z_min: z_min = point[2]
+    return z_max - z_min
+
+
+def squareness(object):
+    x_max, x_min = float(object[0][0]), float(object[0][0])
+    y_max, y_min = float(object[0][1]), float(object[0][1])
+
+    for point in object:
+        if float(point[0]) > x_max:
+            x_max = float(point[0])
+        if float(point[0]) < x_min:
+            x_min = float(point[0])
+        if float(point[1]) > y_max:
+            y_max = float(point[1])
+        if float(point[1]) < y_min:
+            y_min = float(point[1])
+
+    x_dis = x_max - x_min
+    y_dis = y_max - y_min
+    if x_dis > y_dis:
+        return x_dis / y_dis
+    else:
+        return y_dis / x_dis
+
+
+def points_ontop(point_list):
+    high_point = point_list[0][2]
+    z_values = []
+    for point in point_list:
+        if point[2] > high_point:
+            high_point = point[2]
+
+    points_at_top = []
+    for point in point_list:
+        if abs(float(high_point) - float(point[2])) < 0.2:
+            points_at_top.append(point[2])
+
+    ratio_top = len(point_list)/len(points_at_top)
+    return float(ratio_top)
+
+
+def vol_density(object, volume):
+    dens = (len(object) / volume)
+    return dens
+
+
+def convex_hull_area(point_list):
+    hull = scipy.spatial.ConvexHull(point_list)
+    return hull.area
+
+
+def convex_hull_volume(point_list):
+    hull = scipy.spatial.ConvexHull(point_list)
+    return hull.volume
+
+
+def point_density(point_list):
+    hull = scipy.spatial.ConvexHull(point_list)
+    density = len(point_list) / hull.area
+    return density
+
+
+def points_onbottom(point_list):
+    low_point = point_list[0][2]
+    z_values = []
+    for point in point_list:
+        if point[2] > low_point:
+            low_point = point[2]
+
+    points_at_bottom = []
+    for point in point_list:
+        if abs(float(low_point) - float(point[2])) < 0.2:
+            points_at_bottom.append(point[2])
+
+    ratio_bottom =len(points_at_bottom)/len(point_list)
+    return float(ratio_bottom)
+
+
+
+def read_fold():
+    path = r"/Users/yitongxia/Desktop/Geomatics/Q3/GEO507/data"
+    files = os.listdir(path)
+    feature_list = []
+
+    for file in files:
+        if not os.path.isdir(file):
+            filename = path + "/" + file
+            point_list = read_object(filename)
+            z_difference = compute_height_difference(point_list)
+
+            area = convex_hull_area(point_list)
+            volume = convex_hull_volume(point_list)
+            vol_dens = vol_density(point_list, volume)
+            bottom_ratio = points_onbottom(point_list)
+            top_ratio = points_ontop(point_list)
+            density = point_density(point_list)
+            square = squareness(point_list)
+            number = len(point_list)
+
+
+            feature_list.append((vol_dens, density, z_difference))
+    return feature_list
+
+
+def create_distance_dic(feature_list):
+    dist = scipy.spatial.distance.cdist(feature_list, feature_list, 'euclidean')
+    dist_list = {}
+    heap = []
+    for i in range(len(dist)):
+        for j in range(i + 1, len(dist)):
+            dist_list[(i, j)] = dist[i][j]
+            heap.append(dist[i][j])
+    heapq.heapify(heap)
+    return dist_list, heap
+
+
+def get_keys(d, value):
+    for item in d.keys():
+        if d[item] == value:
+            return item
+
+
+def min_dist(dist_dic, heap):
+    if (len(heap) != 0):
+        min_dist = heapq.heappop(heap)
+        key = get_keys(dist_dic, min_dist)
+        return key
+
+
+def find_location(min_key, result):
+    for i in range(len(result)):
+        if isinstance(result[i], int):
+            if result[i] == min_key:
+                return i
+        else:
+            for j in range(len(result[i])):
+                if result[i][j] == min_key:
+                    return i
+
+
+def new_cluster(min_key, result):
+    cluster_id = []
+
+    left = find_location(min_key[0], result)
+    right = find_location(min_key[1], result)
+
+    if isinstance(result[left], int):
+        cluster_id.append(result[left])
+    else:
+        for item in result[left]:
+            cluster_id.append(item)
+
+    if isinstance(result[right], int):
+        cluster_id.append(result[right])
+    else:
+        for item in result[right]:
+            cluster_id.append(item)
+    return cluster_id
+
+
+def if_oversize(result, left, right):
+    if isinstance(result[left], int) == True and isinstance(result[right], int) == True:
+        return True
+    elif not isinstance(result[left], int):
+        if len(result[left]) >= 10:
+            return False
+    elif not isinstance(result[right], int):
+        if len(result[right]) >= 10:
+            return False
+    else:
+        return True
+
+
+def hier2(feature_list, n_cluster):
+    old_cluster = [bicluster(i, id=i) for i in range(len(feature_list))]
+
+    result = []
+    dist_list, heap = create_distance_dic(feature_list)
+    for i in range(len(feature_list)):
+        result.append(i)
+
+    while len(result) > n_cluster:
+        min_key = min_dist(dist_list, heap)
+        left = find_location(min_key[0], result)
+        right = find_location(min_key[1], result)
+        if left == right:
+            continue
+        else:
+            cluster_id = new_cluster(min_key, result)
+
+            if (left > right):
+                del result[left]
+                del result[right]
+            else:
+                del result[right]
+                del result[left]
+
+            result.append(cluster_id)
+    return result
+
+
+if __name__ == '__main__':
+    feature_list = read_fold()
+    cluster = hier2(feature_list,20)
+
+    for item in cluster:
+        if not isinstance(item,int):
+            buildings = 0
+            car = 0
+            fence = 0
+            pole = 0
+            tree = 0
+            print("new cluster")
+            for index in item:
+                if 0 <= index <= 99:
+                    buildings += 1
+                elif 100 <= index <= 199:
+                    car += 1;
+                elif 200 <= index <= 299:
+                    fence += 1
+                elif 300 <= index <= 399:
+                    pole += 1
+                elif 400 <= index <= 499:
+                    tree += 1;
+            sum = buildings + car + fence + pole + tree
+            print(
+                "{}{}{}{}{}{}{}{}{}{}".format("buildings:", buildings / sum, ",car:", car / sum, ",fence:", fence / sum,
+                                              ",pole:", pole / sum, ",tree:", tree / sum))
+
+
+
+    print("finish")
